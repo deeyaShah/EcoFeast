@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "86534602947",
+    "project_id": "ecofeast-a0fee",
+    "storage_bucket": "ecofeast-a0fee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:86534602947:android:50f70096b5f8edf5cc6276",
+        "android_client_info": {
+          "package_name": "com.college.ecofeast"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARg32zGCBpEttK0gQZ3Tu1p7VUWKONWH4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

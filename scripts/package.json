@@ -1,0 +1,12 @@
+{
+  "name": "ecofeast-firestore-migration",
+  "version": "1.0.0",
+  "description": "Migration script for removing donorPhone fields from food_listings in EcoFeast",
+  "main": "remove_donor_phone_migration.js",
+  "scripts": {
+    "migrate": "node remove_donor_phone_migration.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
