@@ -69,4 +69,7 @@ dependencies {
 
     // Location
     implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // MapLibre Map SDK (OpenStreetMap vector tiles via OpenFreeMap)
+    implementation("org.maplibre.gl:android-sdk:11.5.0")
 }

@@ -1,9 +1,11 @@
 package com.college.ecofeast.data.repository
 
 import android.net.Uri
+import android.util.Log
 import android.webkit.MimeTypeMap
 import com.college.ecofeast.data.model.FoodListing
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
@@ -249,36 +251,99 @@ class FoodRepository {
 
     /**
      * Retrieves real-time stream of all available food listings published across the community.
-     * Filters for status == "available".
+     * Filters for status == "available" and sorts locally by createdAt descending.
      */
     fun getAvailableListings(): Flow<List<FoodListing>> = callbackFlow {
         val listenerRegistration = firestore.collection("food_listings")
             .whereEqualTo("status", "available")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    // Fallback to client query without orderBy if composite index is building
-                    firestore.collection("food_listings")
-                        .whereEqualTo("status", "available")
-                        .get()
-                        .addOnSuccessListener { querySnapshot ->
-                            val list = querySnapshot.documents.mapNotNull { doc ->
-                                doc.toObject(FoodListing::class.java)
-                            }.sortedByDescending { it.createdAt }
-                            trySend(list)
-                        }
+                    Log.e("FoodRepository", "Error listening to available food listings", error)
+                    close(error)
                     return@addSnapshotListener
                 }
 
                 if (snapshot != null) {
                     val listings = snapshot.documents.mapNotNull { doc ->
                         doc.toObject(FoodListing::class.java)
-                    }
+                    }.sortedByDescending { it.createdAt }
                     trySend(listings)
                 }
             }
 
         awaitClose { listenerRegistration.remove() }
+    }
+
+    /**
+     * Retrieves a single food listing by its document ID.
+     */
+    suspend fun getListingById(listingId: String): FoodListing? {
+        return try {
+            val doc = firestore.collection("food_listings").document(listingId).get().await()
+            if (doc.exists()) doc.toObject(FoodListing::class.java) else null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Atomically claims an available food listing using a Firestore transaction.
+     * Validates current user authentication, verifies status is "available",
+     * prevents donor self-claiming, checks expiry, and updates status to "claimed"
+     * with verified claimant metadata.
+     */
+    suspend fun claimListing(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = auth.currentUser?.uid
+        if (currentUid.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("You must be signed in to claim food."))
+        }
+
+        try {
+            // 1. Fetch verified profile fullName from users/{uid} document
+            val userSnapshot = firestore.collection("users").document(currentUid).get().await()
+            val claimantName = userSnapshot.getString("fullName")?.trim().orEmpty()
+            if (claimantName.isBlank()) {
+                return@withContext Result.failure(Exception("Profile full name is required to claim food. Please complete your profile."))
+            }
+
+            // 2. Execute atomic Firestore Transaction
+            val docRef = firestore.collection("food_listings").document(listingId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(docRef)
+                if (!snapshot.exists()) {
+                    throw Exception("Food listing no longer exists.")
+                }
+
+                val status = snapshot.getString("status") ?: ""
+                val donorId = snapshot.getString("donorId") ?: ""
+                val expiryDateTime = snapshot.getLong("expiryDateTime")
+
+                if (status != "available") {
+                    throw Exception("This food listing is no longer available.")
+                }
+                if (donorId == currentUid) {
+                    throw Exception("Donors cannot claim their own food listings.")
+                }
+                if (expiryDateTime != null && expiryDateTime <= System.currentTimeMillis()) {
+                    throw Exception("This food listing has expired and can no longer be claimed.")
+                }
+
+                val updates = mapOf(
+                    "status" to "claimed",
+                    "claimantId" to currentUid,
+                    "claimantName" to claimantName,
+                    "claimedAt" to FieldValue.serverTimestamp()
+                )
+                transaction.update(docRef, updates)
+            }.await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            val msg = e.message ?: "Failed to claim food listing."
+            Result.failure(Exception(msg))
+        }
     }
 
     /**

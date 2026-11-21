@@ -1,5 +1,6 @@
 package com.college.ecofeast.data.model
 
+import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 
 data class FoodListing(
@@ -22,6 +23,9 @@ data class FoodListing(
     val longitude: Double? = null,
     val pickupInstructions: String? = null,
     val status: String = "available", // "available", "claimed", "completed", "cancelled"
+    val claimantId: String? = null,
+    val claimantName: String? = null,
+    val claimedAt: Timestamp? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

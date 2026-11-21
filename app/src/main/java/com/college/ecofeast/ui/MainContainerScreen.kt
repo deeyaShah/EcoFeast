@@ -8,12 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.college.ecofeast.ui.nearby.NearbyViewModel
 import com.college.ecofeast.ui.theme.WarmIvory
 
 /**
@@ -28,11 +31,25 @@ fun MainContainerScreen(
     userName: String = "",
     userPhone: String = "",
     userEmail: String = "",
+    pendingClaimListingId: String? = null,
     onSignInClick: () -> Unit = {},
-    onSignOutClick: () -> Unit = {}
+    onSignOutClick: () -> Unit = {},
+    onClaimAsGuest: (String) -> Unit = {},
+    onPendingClaimRestored: () -> Unit = {}
 ) {
     var currentTab by rememberSaveable { mutableStateOf(EcoFeastTab.HOME) }
     var isBottomBarVisible by remember { mutableStateOf(true) }
+    val nearbyViewModel: NearbyViewModel = viewModel()
+
+    // Automatically restore pending claim view after guest completes auth
+    LaunchedEffect(pendingClaimListingId, isGuest) {
+        if (!isGuest && !pendingClaimListingId.isNullOrBlank()) {
+            currentTab = EcoFeastTab.NEARBY
+            isBottomBarVisible = true
+            nearbyViewModel.restorePendingClaimListing(pendingClaimListingId)
+            onPendingClaimRestored()
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -69,6 +86,7 @@ fun MainContainerScreen(
                                 isBottomBarVisible = true
                             },
                             onNavigateToNearby = {
+                                nearbyViewModel.selectViewMode(1) // Map mode
                                 currentTab = EcoFeastTab.NEARBY
                                 isBottomBarVisible = true
                             },
@@ -96,7 +114,10 @@ fun MainContainerScreen(
                     }
                     EcoFeastTab.NEARBY -> {
                         NearbyScreen(
-                            onSignInClick = onSignInClick
+                            isGuest = isGuest,
+                            onSignInClick = onSignInClick,
+                            onClaimAsGuest = onClaimAsGuest,
+                            viewModel = nearbyViewModel
                         )
                     }
                     EcoFeastTab.PROFILE -> {

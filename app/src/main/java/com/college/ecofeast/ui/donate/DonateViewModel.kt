@@ -492,11 +492,20 @@ class DonateViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        val donorId = foodRepository.currentUserId
+        if (donorId.isNullOrBlank()) {
+            _uiState.update {
+                it.copy(
+                    isSubmitting = false,
+                    submitError = "You must be signed in to submit a donation. Please sign in and try again."
+                )
+            }
+            return
+        }
+
         _uiState.update { it.copy(isSubmitting = true, submitError = null) }
 
         viewModelScope.launch {
-            val donorId = foodRepository.currentUserId ?: "anonymous_${System.currentTimeMillis()}"
-
             // 1. Upload photos directly to Cloudinary (unsigned multipart upload)
             val uploadResult = foodRepository.uploadPhotosToCloudinary(state.selectedPhotoPaths)
             val photoUrls = uploadResult.getOrElse { err ->

@@ -29,7 +29,10 @@ data class NearbyUiState(
     val receiverLongitude: Double? = null,
     val isLocatingReceiver: Boolean = false,
     val locationErrorMessage: String? = null,
-    val selectedListing: FoodListing? = null
+    val selectedListing: FoodListing? = null,
+    val isClaiming: Boolean = false,
+    val claimError: String? = null,
+    val claimSuccessMessage: String? = null
 ) {
     val activeFilterCount: Int
         get() = (if (selectedCategory != "All") 1 else 0) +
@@ -44,6 +47,36 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _uiState = MutableStateFlow(NearbyUiState())
     val uiState: StateFlow<NearbyUiState> = _uiState.asStateFlow()
+
+    private val authStateListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+        val newUserId = firebaseAuth.currentUser?.uid
+        _uiState.update { state ->
+            val filtered = applyFilterAndSort(
+                state.allListings,
+                state.searchQuery,
+                state.selectedCategory,
+                state.selectedCondition,
+                state.sortBy,
+                state.receiverLatitude,
+                state.receiverLongitude
+            )
+            val distances = computeDistancesMap(
+                filtered,
+                state.receiverLatitude,
+                state.receiverLongitude
+            )
+            val updatedSelectedListing = if (state.selectedListing != null && !newUserId.isNullOrBlank() && state.selectedListing.donorId == newUserId) {
+                null
+            } else {
+                state.selectedListing
+            }
+            state.copy(
+                filteredListings = filtered,
+                distancesMap = distances,
+                selectedListing = updatedSelectedListing
+            )
+        }
+    }
 
     val categories = listOf(
         "All",
@@ -70,7 +103,17 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     init {
+        auth.addAuthStateListener(authStateListener)
         loadAvailableListings()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            auth.removeAuthStateListener(authStateListener)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun loadAvailableListings() {
@@ -257,6 +300,75 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(selectedListing = listing) }
     }
 
+    /**
+     * Restores a pending claim listing selection after authentication completion.
+     * Fetches the latest listing data, verifies availability and non-donor status,
+     * and presents the food details sheet so the user can explicitly claim.
+     */
+    fun restorePendingClaimListing(listingId: String) {
+        if (listingId.isBlank()) return
+        viewModelScope.launch {
+            val existingInList = _uiState.value.allListings.find { it.id == listingId }
+            val targetListing = existingInList ?: foodRepository.getListingById(listingId)
+            val currentUid = auth.currentUser?.uid
+
+            if (targetListing != null &&
+                targetListing.status == "available" &&
+                (currentUid.isNullOrBlank() || targetListing.donorId != currentUid)
+            ) {
+                _uiState.update { it.copy(selectedListing = targetListing) }
+            }
+        }
+    }
+
+    /**
+     * Executes instant claim transaction for the given food listing.
+     * Prevents overlapping duplicate taps, updates UI loading state,
+     * and manages error/success messages.
+     */
+    fun claimListing(listing: FoodListing, onSuccess: () -> Unit = {}) {
+        if (_uiState.value.isClaiming) return
+
+        _uiState.update {
+            it.copy(
+                isClaiming = true,
+                claimError = null,
+                claimSuccessMessage = null
+            )
+        }
+
+        viewModelScope.launch {
+            val result = foodRepository.claimListing(listing.id)
+            if (result.isSuccess) {
+                _uiState.update {
+                    it.copy(
+                        isClaiming = false,
+                        selectedListing = null,
+                        claimSuccessMessage = "Successfully claimed '${listing.foodName}'!"
+                    )
+                }
+                onSuccess()
+            } else {
+                val errorMsg = result.exceptionOrNull()?.message ?: "Failed to claim listing."
+                _uiState.update {
+                    it.copy(
+                        isClaiming = false,
+                        claimError = errorMsg
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearClaimState() {
+        _uiState.update {
+            it.copy(
+                claimError = null,
+                claimSuccessMessage = null
+            )
+        }
+    }
+
     fun clearFilters() {
         _uiState.update { state ->
             val filtered = applyFilterAndSort(
@@ -289,11 +401,11 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
     ): List<FoodListing> {
         val currentUserId = auth.currentUser?.uid
 
-        // 1. Exclude current user's own donations if authenticated
-        val eligibleListings = if (!currentUserId.isNullOrBlank()) {
-            rawListings.filter { it.donorId != currentUserId }
-        } else {
-            rawListings
+        // 1. Explicitly retain only available listings and exclude current user's own donations if authenticated
+        val eligibleListings = rawListings.filter { listing ->
+            val isAvailable = listing.status.equals("available", ignoreCase = true)
+            val isNotSelfDonated = currentUserId.isNullOrBlank() || listing.donorId != currentUserId
+            isAvailable && isNotSelfDonated
         }
 
         // 2. Filter by search query, category, and food condition

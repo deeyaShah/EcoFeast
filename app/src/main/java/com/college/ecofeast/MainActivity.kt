@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
                 var userEmail by rememberSaveable { mutableStateOf("") }
                 var verificationId by remember { mutableStateOf("") }
                 var resendingToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
+                var pendingClaimListingId by rememberSaveable { mutableStateOf<String?>(null) }
 
                 Crossfade(
                     targetState = currentScreen,
@@ -175,6 +176,7 @@ class MainActivity : ComponentActivity() {
                                 userName = userName,
                                 userPhone = phoneNumber,
                                 userEmail = userEmail,
+                                pendingClaimListingId = pendingClaimListingId,
                                 onSignInClick = {
                                     isGuest = false
                                     currentScreen = AppScreen.PHONE_NUMBER
@@ -187,7 +189,16 @@ class MainActivity : ComponentActivity() {
                                     userEmail = ""
                                     verificationId = ""
                                     resendingToken = null
+                                    pendingClaimListingId = null
                                     currentScreen = AppScreen.WELCOME
+                                },
+                                onClaimAsGuest = { listingId ->
+                                    pendingClaimListingId = listingId
+                                    isGuest = false
+                                    currentScreen = AppScreen.PHONE_NUMBER
+                                },
+                                onPendingClaimRestored = {
+                                    pendingClaimListingId = null
                                 }
                             )
                         }

@@ -58,6 +58,9 @@ import com.college.ecofeast.ui.theme.SageGreen
 import com.college.ecofeast.ui.theme.SecondaryText
 import com.college.ecofeast.ui.theme.SoftGreen
 import com.college.ecofeast.ui.theme.Terracotta
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.college.ecofeast.ui.home.HomeViewModel
+import com.college.ecofeast.ui.home.HomeMapPreview
 import com.college.ecofeast.ui.theme.WarmIvory
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -115,7 +118,8 @@ fun HomeScreen(
     onNavigateToDonate: () -> Unit = {},
     onNavigateToNearby: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
-    onSignInClick: () -> Unit = {}
+    onSignInClick: () -> Unit = {},
+    homeViewModel: HomeViewModel = viewModel()
 ) {
     var showGuestDialog by remember { mutableStateOf(false) }
     var guestActionText by remember { mutableStateOf("") }
@@ -197,8 +201,14 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(22.dp))
 
             // F. AVAILABLE NEAR YOU
-            AvailableNearYouSection(
-                onViewAllClick = onNavigateToNearby
+            val homeUiState by homeViewModel.uiState.collectAsState()
+
+            HomeMapPreview(
+                listings = homeUiState.availableListings,
+                isLocationAvailable = true,
+                locationErrorMessage = null,
+                onPreviewClick = onNavigateToNearby,
+                onEnableLocationClick = onNavigateToNearby
             )
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -793,109 +803,7 @@ private fun ActivityShortcutCard(
     }
 }
 
-/**
- * "Available Near You" Section showing location header and polished empty state.
- */
-@Composable
-fun AvailableNearYouSection(
-    onViewAllClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Filled.LocationOn,
-                    contentDescription = null,
-                    tint = PrimaryForestGreen,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Available Near You",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = DeepText,
-                        fontSize = 17.5.sp
-                    )
-                )
-            }
 
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onViewAllClick() }
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "View All",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        color = SecondaryText,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 12.5.sp
-                    )
-                )
-                Icon(
-                    imageVector = Icons.Outlined.ChevronRight,
-                    contentDescription = null,
-                    tint = SecondaryText,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Polished Empty State Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = SoftGreen.copy(alpha = 0.35f)),
-            border = BorderStroke(1.dp, Color(0xFFC8D6B9))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                MapEmptyStateIllustration(
-                    modifier = Modifier
-                        .fillMaxWidth(0.55f)
-                        .height(100.dp)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "No food listings nearby yet",
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryForestGreen,
-                        fontSize = 15.sp
-                    ),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Check back soon or explore other sections of the app.",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = SecondaryText,
-                        fontSize = 12.sp
-                    ),
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
 
 /**
  * Compact Eco Impact Banner at the bottom of Home screen.
