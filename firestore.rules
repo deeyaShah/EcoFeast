@@ -14,9 +14,9 @@ service cloud.firestore {
         return request.auth != null;
       }
 
-      // Helper function to get current time in milliseconds with nanosecond precision
+      // Helper function to get current time in milliseconds with native Timestamp.toMillis()
       function nowMillis() {
-        return (request.time.seconds * 1000) + (request.time.nanos / 1000000);
+        return request.time.toMillis();
       }
 
       // 1. Read: Any authenticated user can read listings
