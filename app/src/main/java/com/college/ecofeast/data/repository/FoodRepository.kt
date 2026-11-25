@@ -290,7 +290,7 @@ class FoodRepository {
                         .get()
                         .addOnSuccessListener { querySnapshot ->
                             val list = querySnapshot.documents.mapNotNull { doc ->
-                                doc.toObject(FoodListing::class.java)
+                                doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                             }.sortedByDescending { it.createdAt }
                             trySend(list)
                         }
@@ -299,7 +299,7 @@ class FoodRepository {
 
                 if (snapshot != null) {
                     val listings = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(FoodListing::class.java)
+                        doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                     }
                     trySend(listings)
                 }
@@ -328,7 +328,7 @@ class FoodRepository {
                         .get()
                         .addOnSuccessListener { querySnapshot ->
                             val list = querySnapshot.documents.mapNotNull { doc ->
-                                doc.toObject(FoodListing::class.java)
+                                doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                             }.filter { it.status != "available" }
                              .sortedByDescending { it.claimedAt?.seconds ?: it.createdAt }
                             trySend(list)
@@ -338,7 +338,7 @@ class FoodRepository {
 
                 if (snapshot != null) {
                     val claims = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(FoodListing::class.java)
+                        doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                     }.filter { it.status != "available" }
                      .sortedByDescending { it.claimedAt?.seconds ?: it.createdAt }
                     trySend(claims)
@@ -365,7 +365,7 @@ class FoodRepository {
                 if (snapshot != null) {
                     val now = System.currentTimeMillis()
                     val listings = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(FoodListing::class.java)
+                        doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                     }.filter { listing ->
                         listing.expiryDateTime != null && listing.expiryDateTime > now
                     }.sortedByDescending { it.createdAt }
@@ -382,7 +382,7 @@ class FoodRepository {
     suspend fun getListingById(listingId: String): FoodListing? {
         return try {
             val doc = firestore.collection("food_listings").document(listingId).get().await()
-            if (doc.exists()) doc.toObject(FoodListing::class.java) else null
+            if (doc.exists()) doc.toObject(FoodListing::class.java)?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it } else null
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -615,17 +615,17 @@ class FoodRepository {
                 val isExpired = expiryDateTime == null || expiryDateTime <= currentTime
                 val targetStatus = if (isExpired) "cancelled" else "available"
 
-                val updates = mutableMapOf<String, Any>(
+                val updates = mutableMapOf<String, Any?>(
                     "status" to targetStatus,
                     "receiverPickupConfirmed" to false,
                     "donorHandoverConfirmed" to false,
                     "updatedAt" to currentTime
                 )
-                updates["claimantId"] = FieldValue.delete()
-                updates["claimantName"] = FieldValue.delete()
-                updates["claimedAt"] = FieldValue.delete()
-                updates["receiverPickupConfirmedAt"] = FieldValue.delete()
-                updates["donorHandoverConfirmedAt"] = FieldValue.delete()
+                updates["claimantId"] = null
+                updates["claimantName"] = null
+                updates["claimedAt"] = null
+                updates["receiverPickupConfirmedAt"] = null
+                updates["donorHandoverConfirmedAt"] = null
 
                 transaction.update(docRef, updates)
             }.await()

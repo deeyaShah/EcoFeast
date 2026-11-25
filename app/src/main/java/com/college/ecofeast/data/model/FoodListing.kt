@@ -1,10 +1,8 @@
 package com.college.ecofeast.data.model
 
 import com.google.firebase.Timestamp
-import com.google.firebase.firestore.DocumentId
 
 data class FoodListing(
-    @DocumentId
     val id: String = "",
     val donorId: String = "",
     val donorName: String = "",
