@@ -26,6 +26,10 @@ data class FoodListing(
     val claimantId: String? = null,
     val claimantName: String? = null,
     val claimedAt: Timestamp? = null,
+    val receiverPickupConfirmed: Boolean = false,
+    val receiverPickupConfirmedAt: Timestamp? = null,
+    val donorHandoverConfirmed: Boolean = false,
+    val donorHandoverConfirmedAt: Timestamp? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

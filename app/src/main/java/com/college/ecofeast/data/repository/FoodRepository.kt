@@ -189,20 +189,79 @@ class FoodRepository {
 
     /**
      * Creates a new food listing document in Cloud Firestore `food_listings` collection.
+     * Uses an explicit Map to guarantee that all nullable/confirmation fields
+     * (receiverPickupConfirmed, receiverPickupConfirmedAt, donorHandoverConfirmed,
+     * donorHandoverConfirmedAt, claimantId, claimantName, claimedAt) are physically
+     * and explicitly stored in Firestore.
      */
     suspend fun createListing(listing: FoodListing): Result<String> {
+        val currentUid = currentUserId
+        if (currentUid.isNullOrBlank()) {
+            return Result.failure(Exception("You must be signed in to create a food donation."))
+        }
+
+        val now = System.currentTimeMillis()
+        val expiry = listing.expiryDateTime
+        if (expiry == null) {
+            return Result.failure(Exception("Please select a best before / expiry date & time."))
+        }
+        if (expiry <= now) {
+            return Result.failure(Exception("Expiry time must be in the future."))
+        }
+        if (expiry <= listing.preparationDateTime) {
+            return Result.failure(Exception("Expiry date and time must be after preparation time."))
+        }
+
         return try {
             val collectionRef = firestore.collection("food_listings")
             val docRef = collectionRef.document()
 
             val finalListing = listing.copy(
                 id = docRef.id,
-                donorId = currentUserId ?: listing.donorId,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis()
+                donorId = currentUid,
+                status = "available",
+                claimantId = null,
+                claimantName = null,
+                claimedAt = null,
+                receiverPickupConfirmed = false,
+                receiverPickupConfirmedAt = null,
+                donorHandoverConfirmed = false,
+                donorHandoverConfirmedAt = null,
+                createdAt = now,
+                updatedAt = now
             )
 
-            docRef.set(finalListing).await()
+            val dataMap = mapOf(
+                "id" to finalListing.id,
+                "donorId" to finalListing.donorId,
+                "donorName" to finalListing.donorName,
+                "foodName" to finalListing.foodName,
+                "category" to finalListing.category,
+                "description" to finalListing.description,
+                "quantity" to finalListing.quantity,
+                "quantityUnit" to finalListing.quantityUnit,
+                "photoUrls" to finalListing.photoUrls,
+                "preparationDateTime" to finalListing.preparationDateTime,
+                "expiryDateTime" to finalListing.expiryDateTime,
+                "foodCondition" to finalListing.foodCondition,
+                "allergenNotes" to finalListing.allergenNotes,
+                "pickupAddress" to finalListing.pickupAddress,
+                "latitude" to finalListing.latitude,
+                "longitude" to finalListing.longitude,
+                "pickupInstructions" to finalListing.pickupInstructions,
+                "status" to finalListing.status,
+                "claimantId" to finalListing.claimantId,
+                "claimantName" to finalListing.claimantName,
+                "claimedAt" to finalListing.claimedAt,
+                "receiverPickupConfirmed" to finalListing.receiverPickupConfirmed,
+                "receiverPickupConfirmedAt" to finalListing.receiverPickupConfirmedAt,
+                "donorHandoverConfirmed" to finalListing.donorHandoverConfirmed,
+                "donorHandoverConfirmedAt" to finalListing.donorHandoverConfirmedAt,
+                "createdAt" to finalListing.createdAt,
+                "updatedAt" to finalListing.updatedAt
+            )
+
+            docRef.set(dataMap).await()
             Result.success(docRef.id)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -250,8 +309,48 @@ class FoodRepository {
     }
 
     /**
+     * Retrieves real-time stream of food listings claimed by the specified receiver (claimantId).
+     */
+    fun getUserClaims(claimantId: String): Flow<List<FoodListing>> = callbackFlow {
+        if (claimantId.isBlank()) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val listenerRegistration = firestore.collection("food_listings")
+            .whereEqualTo("claimantId", claimantId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    // Fallback to client query without orderBy if index is building
+                    firestore.collection("food_listings")
+                        .whereEqualTo("claimantId", claimantId)
+                        .get()
+                        .addOnSuccessListener { querySnapshot ->
+                            val list = querySnapshot.documents.mapNotNull { doc ->
+                                doc.toObject(FoodListing::class.java)
+                            }.filter { it.status != "available" }
+                             .sortedByDescending { it.claimedAt?.seconds ?: it.createdAt }
+                            trySend(list)
+                        }
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    val claims = snapshot.documents.mapNotNull { doc ->
+                        doc.toObject(FoodListing::class.java)
+                    }.filter { it.status != "available" }
+                     .sortedByDescending { it.claimedAt?.seconds ?: it.createdAt }
+                    trySend(claims)
+                }
+            }
+
+        awaitClose { listenerRegistration.remove() }
+    }
+
+    /**
      * Retrieves real-time stream of all available food listings published across the community.
-     * Filters for status == "available" and sorts locally by createdAt descending.
+     * Filters for status == "available" and valid future expiryDateTime, sorted locally by createdAt descending.
      */
     fun getAvailableListings(): Flow<List<FoodListing>> = callbackFlow {
         val listenerRegistration = firestore.collection("food_listings")
@@ -264,8 +363,11 @@ class FoodRepository {
                 }
 
                 if (snapshot != null) {
+                    val now = System.currentTimeMillis()
                     val listings = snapshot.documents.mapNotNull { doc ->
                         doc.toObject(FoodListing::class.java)
+                    }.filter { listing ->
+                        listing.expiryDateTime != null && listing.expiryDateTime > now
                     }.sortedByDescending { it.createdAt }
                     trySend(listings)
                 }
@@ -291,25 +393,35 @@ class FoodRepository {
      * Atomically claims an available food listing using a Firestore transaction.
      * Validates current user authentication, verifies status is "available",
      * prevents donor self-claiming, checks expiry, and updates status to "claimed"
-     * with verified claimant metadata.
+     * with verified claimant metadata. Includes stage-specific diagnostic logging.
      */
     suspend fun claimListing(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
         val currentUid = auth.currentUser?.uid
+        Log.d("FoodRepository", "CLAIM_STAGE_0: Starting claimListing for listingId=$listingId, currentUid=$currentUid")
         if (currentUid.isNullOrBlank()) {
             return@withContext Result.failure(Exception("You must be signed in to claim food."))
         }
 
+        val claimantName: String
         try {
             // 1. Fetch verified profile fullName from users/{uid} document
             val userSnapshot = firestore.collection("users").document(currentUid).get().await()
-            val claimantName = userSnapshot.getString("fullName")?.trim().orEmpty()
+            val exists = userSnapshot.exists()
+            claimantName = userSnapshot.getString("fullName")?.trim().orEmpty()
+            Log.d("FoodRepository", "CLAIM_STAGE_1_PROFILE: Profile read complete. exists=$exists, hasFullName=${claimantName.isNotBlank()}")
             if (claimantName.isBlank()) {
                 return@withContext Result.failure(Exception("Profile full name is required to claim food. Please complete your profile."))
             }
+        } catch (e: Exception) {
+            Log.e("FoodRepository", "CLAIM_STAGE_1_ERROR: Failed to read users/$currentUid", e)
+            return@withContext Result.failure(Exception("Failed to load user profile: ${e.message}", e))
+        }
 
+        try {
             // 2. Execute atomic Firestore Transaction
             val docRef = firestore.collection("food_listings").document(listingId)
             firestore.runTransaction { transaction ->
+                Log.d("FoodRepository", "CLAIM_STAGE_2_TX_START: Reading listing document $listingId")
                 val snapshot = transaction.get(docRef)
                 if (!snapshot.exists()) {
                     throw Exception("Food listing no longer exists.")
@@ -317,15 +429,22 @@ class FoodRepository {
 
                 val status = snapshot.getString("status") ?: ""
                 val donorId = snapshot.getString("donorId") ?: ""
-                val expiryDateTime = snapshot.getLong("expiryDateTime")
+                val rawExpiry = snapshot.get("expiryDateTime")
+                val expiryLong = snapshot.getLong("expiryDateTime")
+                val isDonorMatch = (donorId == currentUid)
+
+                Log.d("FoodRepository", "CLAIM_STAGE_2_TX_DOC: status=$status, donorId=$donorId, currentUid=$currentUid, isDonorMatch=$isDonorMatch, rawExpiryType=${rawExpiry?.javaClass?.simpleName}, expiryVal=$expiryLong")
 
                 if (status != "available") {
                     throw Exception("This food listing is no longer available.")
                 }
-                if (donorId == currentUid) {
+                if (isDonorMatch) {
                     throw Exception("Donors cannot claim their own food listings.")
                 }
-                if (expiryDateTime != null && expiryDateTime <= System.currentTimeMillis()) {
+                if (expiryLong == null) {
+                    throw Exception("Listing lacks a valid expiry timestamp.")
+                }
+                if (expiryLong <= System.currentTimeMillis()) {
                     throw Exception("This food listing has expired and can no longer be claimed.")
                 }
 
@@ -333,7 +452,67 @@ class FoodRepository {
                     "status" to "claimed",
                     "claimantId" to currentUid,
                     "claimantName" to claimantName,
-                    "claimedAt" to FieldValue.serverTimestamp()
+                    "claimedAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                Log.d("FoodRepository", "CLAIM_STAGE_2_TX_COMMIT: Applying transaction update payload=$updates")
+                transaction.update(docRef, updates)
+            }.await()
+
+            Log.d("FoodRepository", "CLAIM_STAGE_3_SUCCESS: Claim transaction committed successfully for $listingId")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            val exClass = e.javaClass.simpleName
+            val exMsg = e.message ?: "Unknown error"
+            val cause = e.cause?.toString() ?: "None"
+            Log.e("FoodRepository", "CLAIM_STAGE_3_ERROR: Transaction failed. class=$exClass, message=$exMsg, cause=$cause", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Confirms pickup collection by the authenticated receiver (claimant).
+     * If donor has already confirmed handover, automatically completes the listing.
+     */
+    suspend fun confirmPickup(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = auth.currentUser?.uid
+        if (currentUid.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("You must be signed in to confirm pickup."))
+        }
+
+        try {
+            val docRef = firestore.collection("food_listings").document(listingId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(docRef)
+                if (!snapshot.exists()) {
+                    throw Exception("Food listing no longer exists.")
+                }
+
+                val claimantId = snapshot.getString("claimantId") ?: ""
+                val status = snapshot.getString("status") ?: ""
+                val alreadyConfirmed = snapshot.getBoolean("receiverPickupConfirmed") == true
+
+                if (claimantId != currentUid) {
+                    throw Exception("Only the assigned claimant can confirm pickup.")
+                }
+
+                if (alreadyConfirmed) {
+                    // Calling party has already confirmed: successful no-op regardless of claimed or completed status
+                    return@runTransaction
+                }
+
+                if (status != "claimed") {
+                    throw Exception("Listing is not in a claimed state.")
+                }
+
+                val donorHandoverConfirmed = snapshot.getBoolean("donorHandoverConfirmed") == true
+                val newStatus = if (donorHandoverConfirmed) "completed" else "claimed"
+
+                val updates = mutableMapOf<String, Any>(
+                    "receiverPickupConfirmed" to true,
+                    "receiverPickupConfirmedAt" to FieldValue.serverTimestamp(),
+                    "status" to newStatus,
+                    "updatedAt" to System.currentTimeMillis()
                 )
                 transaction.update(docRef, updates)
             }.await()
@@ -341,40 +520,166 @@ class FoodRepository {
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
-            val msg = e.message ?: "Failed to claim food listing."
-            Result.failure(Exception(msg))
+            Result.failure(Exception(e.message ?: "Failed to confirm pickup."))
         }
     }
 
     /**
-     * Updates listing status in Cloud Firestore (e.g. "available", "claimed", "completed", "cancelled").
+     * Confirms handover by the authenticated donor.
+     * If receiver has already confirmed pickup, automatically completes the listing.
      */
-    suspend fun updateListingStatus(listingId: String, newStatus: String): Result<Unit> {
-        return try {
-            firestore.collection("food_listings")
-                .document(listingId)
-                .update("status", newStatus)
-                .await()
+    suspend fun confirmHandover(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = auth.currentUser?.uid
+        if (currentUid.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("You must be signed in to confirm handover."))
+        }
+
+        try {
+            val docRef = firestore.collection("food_listings").document(listingId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(docRef)
+                if (!snapshot.exists()) {
+                    throw Exception("Food listing no longer exists.")
+                }
+
+                val donorId = snapshot.getString("donorId") ?: ""
+                val status = snapshot.getString("status") ?: ""
+                val alreadyConfirmed = snapshot.getBoolean("donorHandoverConfirmed") == true
+
+                if (donorId != currentUid) {
+                    throw Exception("Only the original donor can confirm handover.")
+                }
+
+                if (alreadyConfirmed) {
+                    // Calling party has already confirmed: successful no-op regardless of claimed or completed status
+                    return@runTransaction
+                }
+
+                if (status != "claimed") {
+                    throw Exception("Listing is not in a claimed state.")
+                }
+
+                val receiverPickupConfirmed = snapshot.getBoolean("receiverPickupConfirmed") == true
+                val newStatus = if (receiverPickupConfirmed) "completed" else "claimed"
+
+                val updates = mutableMapOf<String, Any>(
+                    "donorHandoverConfirmed" to true,
+                    "donorHandoverConfirmedAt" to FieldValue.serverTimestamp(),
+                    "status" to newStatus,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                transaction.update(docRef, updates)
+            }.await()
+
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
-            Result.failure(e)
+            Result.failure(Exception(e.message ?: "Failed to confirm handover."))
         }
     }
 
     /**
-     * Deletes a food listing from Cloud Firestore.
+     * Allows receiver to release claim before confirmation, restoring listing availability if not expired.
      */
-    suspend fun deleteListing(listingId: String): Result<Unit> {
-        return try {
-            firestore.collection("food_listings")
-                .document(listingId)
-                .delete()
-                .await()
+    suspend fun releaseClaim(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = auth.currentUser?.uid
+        if (currentUid.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("You must be signed in."))
+        }
+
+        try {
+            val docRef = firestore.collection("food_listings").document(listingId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(docRef)
+                if (!snapshot.exists()) {
+                    throw Exception("Food listing no longer exists.")
+                }
+
+                val claimantId = snapshot.getString("claimantId") ?: ""
+                val status = snapshot.getString("status") ?: ""
+                val receiverConfirmed = snapshot.getBoolean("receiverPickupConfirmed") == true
+                val donorConfirmed = snapshot.getBoolean("donorHandoverConfirmed") == true
+
+                if (claimantId != currentUid) {
+                    throw Exception("Only the assigned claimant can release this claim.")
+                }
+                if (status != "claimed") {
+                    throw Exception("Listing cannot be released in its current state.")
+                }
+                if (receiverConfirmed || donorConfirmed) {
+                    throw Exception("Cannot release claim after confirmation has started.")
+                }
+
+                val expiryDateTime = snapshot.getLong("expiryDateTime")
+                val currentTime = System.currentTimeMillis()
+                val isExpired = expiryDateTime == null || expiryDateTime <= currentTime
+                val targetStatus = if (isExpired) "cancelled" else "available"
+
+                val updates = mutableMapOf<String, Any>(
+                    "status" to targetStatus,
+                    "receiverPickupConfirmed" to false,
+                    "donorHandoverConfirmed" to false,
+                    "updatedAt" to currentTime
+                )
+                updates["claimantId"] = FieldValue.delete()
+                updates["claimantName"] = FieldValue.delete()
+                updates["claimedAt"] = FieldValue.delete()
+                updates["receiverPickupConfirmedAt"] = FieldValue.delete()
+                updates["donorHandoverConfirmedAt"] = FieldValue.delete()
+
+                transaction.update(docRef, updates)
+            }.await()
+
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
-            Result.failure(e)
+            Result.failure(Exception(e.message ?: "Failed to release claim."))
+        }
+    }
+
+    /**
+     * Allows donor to withdraw a claimed or available donation.
+     */
+    suspend fun withdrawDonation(listingId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = auth.currentUser?.uid
+        if (currentUid.isNullOrBlank()) {
+            return@withContext Result.failure(Exception("You must be signed in."))
+        }
+
+        try {
+            val docRef = firestore.collection("food_listings").document(listingId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(docRef)
+                if (!snapshot.exists()) {
+                    throw Exception("Food listing no longer exists.")
+                }
+
+                val donorId = snapshot.getString("donorId") ?: ""
+                val status = snapshot.getString("status") ?: ""
+                val receiverConfirmed = snapshot.getBoolean("receiverPickupConfirmed") == true
+                val donorConfirmed = snapshot.getBoolean("donorHandoverConfirmed") == true
+
+                if (donorId != currentUid) {
+                    throw Exception("Only the original donor can withdraw this donation.")
+                }
+                if (status != "available" && status != "claimed") {
+                    throw Exception("Donation cannot be withdrawn in its current status ($status).")
+                }
+                if (receiverConfirmed || donorConfirmed) {
+                    throw Exception("Cannot withdraw donation after confirmation has started.")
+                }
+
+                val updates = mapOf(
+                    "status" to "cancelled",
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                transaction.update(docRef, updates)
+            }.await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(Exception(e.message ?: "Failed to withdraw donation."))
         }
     }
 }

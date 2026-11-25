@@ -1,0 +1,198 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+      match /users/{userId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == userId;
+      }
+
+    match /food_listings/{listingId} {
+
+      // Helper function to check if user is authenticated
+      function isAuthenticated() {
+        return request.auth != null;
+      }
+
+      // Helper function to get current time in milliseconds with nanosecond precision
+      function nowMillis() {
+        return (request.time.seconds * 1000) + (request.time.nanos / 1000000);
+      }
+
+      // 1. Read: Any authenticated user can read listings
+      allow read: if isAuthenticated();
+
+      // 2. Create: Authenticated user creating a valid listing with mandatory valid expiry
+      allow create: if isAuthenticated()
+                    && request.resource.data.donorId == request.auth.uid
+                    && request.resource.data.status == 'available'
+                    && request.resource.data.claimantId == null
+                    && request.resource.data.receiverPickupConfirmed == false
+                    && request.resource.data.donorHandoverConfirmed == false
+                    && request.resource.data.expiryDateTime is number
+                    && request.resource.data.expiryDateTime > nowMillis()
+                    && request.resource.data.preparationDateTime is number
+                    && request.resource.data.expiryDateTime > request.resource.data.preparationDateTime
+                    && request.resource.data.keys().hasOnly([
+                         'id', 'donorId', 'donorName', 'foodName', 'category', 'description',
+                         'quantity', 'quantityUnit', 'photoUrls', 'preparationDateTime',
+                         'expiryDateTime', 'foodCondition', 'allergenNotes', 'pickupAddress',
+                         'latitude', 'longitude', 'pickupInstructions', 'status',
+                         'claimantId', 'claimantName', 'claimedAt',
+                         'receiverPickupConfirmed', 'receiverPickupConfirmedAt',
+                         'donorHandoverConfirmed', 'donorHandoverConfirmedAt',
+                         'createdAt', 'updatedAt'
+                       ]);
+
+      // 3. Update: Strict role-based field diff validation
+      allow update: if isAuthenticated() && (
+
+        // -------------------------------------------------------------
+        // CASE A: Donor Updates
+        // -------------------------------------------------------------
+        (
+          resource.data.donorId == request.auth.uid &&
+
+          // A1: Donor confirming handover
+          (
+            resource.data.status == 'claimed' &&
+            request.resource.data.status in ['claimed', 'completed'] &&
+            request.resource.data.donorHandoverConfirmed == true &&
+            // Require both confirmations if status becomes completed
+            (request.resource.data.status != 'completed' || (request.resource.data.receiverPickupConfirmed == true && request.resource.data.donorHandoverConfirmed == true)) &&
+            // Donor cannot touch receiver confirmation fields or timestamps
+            request.resource.data.receiverPickupConfirmed == resource.data.receiverPickupConfirmed &&
+            request.resource.data.receiverPickupConfirmedAt == resource.data.receiverPickupConfirmedAt &&
+            // Donor cannot change donorId or claimantId
+            request.resource.data.donorId == resource.data.donorId &&
+            request.resource.data.claimantId == resource.data.claimantId &&
+            // Timestamp validation: if newly confirmed, must equal request.time; if already confirmed, must remain unchanged
+            (
+              (resource.data.donorHandoverConfirmed != true && request.resource.data.donorHandoverConfirmedAt == request.time) ||
+              (resource.data.donorHandoverConfirmed == true && request.resource.data.donorHandoverConfirmedAt == resource.data.donorHandoverConfirmedAt)
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'donorHandoverConfirmed', 'donorHandoverConfirmedAt', 'updatedAt'
+            ])
+          ) ||
+
+          // A2: Donor withdrawing / cancelling (only when no confirmations started)
+          (
+            resource.data.status in ['available', 'claimed'] &&
+            request.resource.data.status == 'cancelled' &&
+            resource.data.receiverPickupConfirmed != true &&
+            resource.data.donorHandoverConfirmed != true &&
+            request.resource.data.donorId == resource.data.donorId &&
+            request.resource.data.claimantId == resource.data.claimantId &&
+            request.resource.data.receiverPickupConfirmed == resource.data.receiverPickupConfirmed &&
+            request.resource.data.donorHandoverConfirmed == resource.data.donorHandoverConfirmed &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt'
+            ])
+          ) ||
+
+          // A3: Donor editing available listing details
+          (
+            resource.data.status == 'available' &&
+            request.resource.data.status == 'available' &&
+            request.resource.data.donorId == resource.data.donorId &&
+            request.resource.data.claimantId == resource.data.claimantId &&
+            request.resource.data.receiverPickupConfirmed == false &&
+            request.resource.data.donorHandoverConfirmed == false &&
+            request.resource.data.expiryDateTime is number &&
+            request.resource.data.expiryDateTime > nowMillis() &&
+            request.resource.data.preparationDateTime is number &&
+            request.resource.data.expiryDateTime > request.resource.data.preparationDateTime &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'foodName', 'category', 'description', 'quantity', 'quantityUnit',
+              'photoUrls', 'preparationDateTime', 'expiryDateTime', 'foodCondition',
+              'allergenNotes', 'pickupAddress', 'latitude', 'longitude', 'pickupInstructions',
+              'updatedAt'
+            ])
+          )
+        ) ||
+
+        // -------------------------------------------------------------
+        // CASE B: Claimant / Receiver Updates
+        // -------------------------------------------------------------
+        (
+          resource.data.claimantId == request.auth.uid &&
+          request.resource.data.donorId == resource.data.donorId &&
+          request.resource.data.claimantId == resource.data.claimantId &&
+
+          // B1: Claimant confirming pickup
+          (
+            resource.data.status == 'claimed' &&
+            request.resource.data.status in ['claimed', 'completed'] &&
+            request.resource.data.receiverPickupConfirmed == true &&
+            // Require both confirmations if status becomes completed
+            (request.resource.data.status != 'completed' || (request.resource.data.receiverPickupConfirmed == true && request.resource.data.donorHandoverConfirmed == true)) &&
+            // Claimant cannot touch donor confirmation fields or timestamps
+            request.resource.data.donorHandoverConfirmed == resource.data.donorHandoverConfirmed &&
+            request.resource.data.donorHandoverConfirmedAt == resource.data.donorHandoverConfirmedAt &&
+            // Timestamp validation: if newly confirmed, must equal request.time; if already confirmed, must remain unchanged
+            (
+              (resource.data.receiverPickupConfirmed != true && request.resource.data.receiverPickupConfirmedAt == request.time) ||
+              (resource.data.receiverPickupConfirmed == true && request.resource.data.receiverPickupConfirmedAt == resource.data.receiverPickupConfirmedAt)
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'receiverPickupConfirmed', 'receiverPickupConfirmedAt', 'updatedAt'
+            ])
+          ) ||
+
+          // B2: Claimant releasing claim (only when no confirmations started)
+          (
+            resource.data.status == 'claimed' &&
+            request.resource.data.status in ['available', 'cancelled'] &&
+            resource.data.receiverPickupConfirmed != true &&
+            resource.data.donorHandoverConfirmed != true &&
+            // Require clearing claimant and confirmation data
+            (!request.resource.data.keys().hasAny(['claimantId', 'claimantName', 'claimedAt', 'receiverPickupConfirmedAt', 'donorHandoverConfirmedAt']) ||
+             request.resource.data.claimantId == null &&
+             request.resource.data.claimantName == null &&
+             request.resource.data.claimedAt == null &&
+             request.resource.data.receiverPickupConfirmedAt == null &&
+             request.resource.data.donorHandoverConfirmedAt == null) &&
+            request.resource.data.receiverPickupConfirmed == false &&
+            request.resource.data.donorHandoverConfirmed == false &&
+            // If releasing to available, expiry must be valid numeric timestamp in the future; if missing/expired, status must be cancelled
+            (
+              (request.resource.data.status == 'available' && ('expiryDateTime' in request.resource.data && request.resource.data.expiryDateTime is number && request.resource.data.expiryDateTime > nowMillis())) ||
+              (request.resource.data.status == 'cancelled' && (!('expiryDateTime' in request.resource.data) || request.resource.data.expiryDateTime == null || (request.resource.data.expiryDateTime is number && request.resource.data.expiryDateTime <= nowMillis())))
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'claimantId', 'claimantName', 'claimedAt',
+              'receiverPickupConfirmed', 'receiverPickupConfirmedAt',
+              'donorHandoverConfirmed', 'donorHandoverConfirmedAt', 'updatedAt'
+            ])
+          )
+        ) ||
+
+        // -------------------------------------------------------------
+        // CASE C: New User Claiming an Available Listing
+        // -------------------------------------------------------------
+        (
+          resource.data.status == 'available' &&
+          request.resource.data.status == 'claimed' &&
+          resource.data.donorId != request.auth.uid &&
+          request.resource.data.donorId == resource.data.donorId &&
+          request.resource.data.claimantId == request.auth.uid &&
+          request.resource.data.receiverPickupConfirmed == false &&
+          request.resource.data.donorHandoverConfirmed == false &&
+          request.resource.data.receiverPickupConfirmedAt == null &&
+          request.resource.data.donorHandoverConfirmedAt == null &&
+          // Mandatory Expiry Validation: listing must have numeric expiry > nowMillis()
+          'expiryDateTime' in resource.data &&
+          resource.data.expiryDateTime is number &&
+          resource.data.expiryDateTime > nowMillis() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'claimantId', 'claimantName', 'claimedAt', 'updatedAt'
+          ])
+        )
+      );
+
+      // 4. Delete: Direct deletion denied to preserve donation history
+      allow delete: if false;
+    }
+  }
+}

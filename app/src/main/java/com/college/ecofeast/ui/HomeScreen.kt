@@ -118,6 +118,7 @@ fun HomeScreen(
     onNavigateToDonate: () -> Unit = {},
     onNavigateToNearby: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
+    onNavigateToMyClaims: () -> Unit = {},
     onSignInClick: () -> Unit = {},
     homeViewModel: HomeViewModel = viewModel()
 ) {
@@ -188,12 +189,20 @@ fun HomeScreen(
             // E. YOUR ACTIVITY SHORTCUTS
             YourActivitySection(
                 isGuest = isGuest,
-                onActivityClick = { actionName ->
+                onDonationsClick = {
                     if (isGuest) {
-                        guestActionText = actionName
+                        guestActionText = "donations history"
                         showGuestDialog = true
                     } else {
-                        onNavigateToProfile()
+                        onNavigateToDonate()
+                    }
+                },
+                onClaimsClick = {
+                    if (isGuest) {
+                        guestActionText = "claims history"
+                        showGuestDialog = true
+                    } else {
+                        onNavigateToMyClaims()
                     }
                 }
             )
@@ -653,7 +662,8 @@ private fun ActionCardItem(
 @Composable
 fun YourActivitySection(
     isGuest: Boolean,
-    onActivityClick: (String) -> Unit,
+    onDonationsClick: () -> Unit,
+    onClaimsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -674,7 +684,7 @@ fun YourActivitySection(
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable { onActivityClick("activity history") }
+                    .clickable { onDonationsClick() }
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -705,7 +715,7 @@ fun YourActivitySection(
                 title = "My Donations",
                 subtitle = if (isGuest) "Sign in to track" else "Food you've shared",
                 iconVector = Icons.Filled.Inventory2,
-                onClick = { onActivityClick("donations history") },
+                onClick = onDonationsClick,
                 modifier = Modifier.weight(1f)
             )
 
@@ -713,7 +723,7 @@ fun YourActivitySection(
                 title = "My Claims",
                 subtitle = if (isGuest) "Sign in to track" else "Food you've claimed",
                 iconVector = Icons.Filled.Favorite,
-                onClick = { onActivityClick("claims history") },
+                onClick = onClaimsClick,
                 modifier = Modifier.weight(1f)
             )
         }

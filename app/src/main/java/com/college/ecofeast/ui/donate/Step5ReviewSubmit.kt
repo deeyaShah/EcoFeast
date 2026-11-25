@@ -201,9 +201,12 @@ fun Step5ReviewSubmit(
             onEditClick = { onJumpToStep(3) }
         ) {
             SummaryDetailRow(label = "Preparation Date", value = dateFormat.format(Date(preparationTimestamp)))
-            if (expiryTimestamp != null) {
-                SummaryDetailRow(label = "Expiry Date", value = dateFormat.format(Date(expiryTimestamp)))
+            val expiryDisplay = if (expiryTimestamp != null) {
+                dateFormat.format(Date(expiryTimestamp))
+            } else {
+                "Missing Expiry (Please edit Step 3)"
             }
+            SummaryDetailRow(label = "Expiry Date & Time", value = expiryDisplay)
             SummaryDetailRow(label = "Food Condition", value = foodCondition)
             if (allergenNotes.isNotBlank()) {
                 SummaryDetailRow(label = "Allergen Notes", value = allergenNotes)

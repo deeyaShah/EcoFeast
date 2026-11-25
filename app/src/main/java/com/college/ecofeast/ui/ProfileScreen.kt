@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Button
@@ -57,7 +58,8 @@ fun ProfileScreen(
     userPhone: String = "",
     userEmail: String = "",
     onSignInClick: () -> Unit = {},
-    onSignOutClick: () -> Unit = {}
+    onSignOutClick: () -> Unit = {},
+    onNavigateToMyClaims: () -> Unit = {}
 ) {
     Box(
         modifier = modifier
@@ -269,6 +271,36 @@ fun ProfileScreen(
                         }
 
                         Spacer(modifier = Modifier.height(20.dp))
+
+                        // View My Claims Button
+                        OutlinedButton(
+                            onClick = onNavigateToMyClaims,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            shape = RoundedCornerShape(22.dp),
+                            border = BorderStroke(1.5.dp, PrimaryForestGreen)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.Favorite,
+                                    contentDescription = null,
+                                    tint = PrimaryForestGreen,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "View My Claims",
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        color = PrimaryForestGreen,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         // Sign Out Button
                         OutlinedButton(

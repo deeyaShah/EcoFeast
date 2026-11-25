@@ -48,33 +48,40 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(NearbyUiState())
     val uiState: StateFlow<NearbyUiState> = _uiState.asStateFlow()
 
+    private var lastObservedUserId: String? = auth.currentUser?.uid
+
     private val authStateListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         val newUserId = firebaseAuth.currentUser?.uid
-        _uiState.update { state ->
-            val filtered = applyFilterAndSort(
-                state.allListings,
-                state.searchQuery,
-                state.selectedCategory,
-                state.selectedCondition,
-                state.sortBy,
-                state.receiverLatitude,
-                state.receiverLongitude
-            )
-            val distances = computeDistancesMap(
-                filtered,
-                state.receiverLatitude,
-                state.receiverLongitude
-            )
-            val updatedSelectedListing = if (state.selectedListing != null && !newUserId.isNullOrBlank() && state.selectedListing.donorId == newUserId) {
-                null
-            } else {
-                state.selectedListing
+        if (newUserId != lastObservedUserId) {
+            lastObservedUserId = newUserId
+            loadAvailableListings()
+        } else {
+            _uiState.update { state ->
+                val filtered = applyFilterAndSort(
+                    state.allListings,
+                    state.searchQuery,
+                    state.selectedCategory,
+                    state.selectedCondition,
+                    state.sortBy,
+                    state.receiverLatitude,
+                    state.receiverLongitude
+                )
+                val distances = computeDistancesMap(
+                    filtered,
+                    state.receiverLatitude,
+                    state.receiverLongitude
+                )
+                val updatedSelectedListing = if (state.selectedListing != null && !newUserId.isNullOrBlank() && state.selectedListing.donorId == newUserId) {
+                    null
+                } else {
+                    state.selectedListing
+                }
+                state.copy(
+                    filteredListings = filtered,
+                    distancesMap = distances,
+                    selectedListing = updatedSelectedListing
+                )
             }
-            state.copy(
-                filteredListings = filtered,
-                distancesMap = distances,
-                selectedListing = updatedSelectedListing
-            )
         }
     }
 
@@ -400,12 +407,14 @@ class NearbyViewModel(application: Application) : AndroidViewModel(application) 
         userLng: Double?
     ): List<FoodListing> {
         val currentUserId = auth.currentUser?.uid
+        val now = System.currentTimeMillis()
 
-        // 1. Explicitly retain only available listings and exclude current user's own donations if authenticated
+        // 1. Explicitly retain only available listings, exclude current user's own donations, and require valid future expiry
         val eligibleListings = rawListings.filter { listing ->
             val isAvailable = listing.status.equals("available", ignoreCase = true)
             val isNotSelfDonated = currentUserId.isNullOrBlank() || listing.donorId != currentUserId
-            isAvailable && isNotSelfDonated
+            val hasValidFutureExpiry = listing.expiryDateTime != null && listing.expiryDateTime > now
+            isAvailable && isNotSelfDonated && hasValidFutureExpiry
         }
 
         // 2. Filter by search query, category, and food condition

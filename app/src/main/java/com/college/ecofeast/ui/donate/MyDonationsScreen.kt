@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,7 +32,9 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -81,9 +84,8 @@ fun MyDonationsScreen(
     if (uiState.subScreen == DonateSubScreen.MY_DONATIONS_DETAIL && uiState.selectedListing != null) {
         DonationDetailView(
             listing = uiState.selectedListing,
-            onBackClick = { viewModel.navigateTo(DonateSubScreen.MY_DONATIONS_LIST) },
-            onCancelClick = { viewModel.cancelSelectedListing(uiState.selectedListing.id) },
-            onCompleteClick = { viewModel.completeSelectedListing(uiState.selectedListing.id) }
+            viewModel = viewModel,
+            onBackClick = { viewModel.navigateTo(DonateSubScreen.MY_DONATIONS_LIST) }
         )
     } else {
         DonationsListView(
@@ -105,10 +107,10 @@ private fun DonationsListView(
     modifier: Modifier = Modifier
 ) {
     val activeListings = remember(uiState.userListings) {
-        uiState.userListings.filter { it.status == "available" }
+        uiState.userListings.filter { it.status == "available" || it.status == "claimed" }
     }
     val pastListings = remember(uiState.userListings) {
-        uiState.userListings.filter { it.status != "available" }
+        uiState.userListings.filter { it.status == "completed" || it.status == "cancelled" }
     }
 
     val currentList = if (uiState.selectedListingTab == 0) activeListings else pastListings
@@ -117,6 +119,7 @@ private fun DonationsListView(
         modifier = modifier
             .fillMaxSize()
             .background(WarmIvory)
+            .statusBarsPadding()
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
@@ -159,7 +162,6 @@ private fun DonationsListView(
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Active Segment Button
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -179,7 +181,6 @@ private fun DonationsListView(
                     )
                 }
 
-                // Past Segment Button
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -207,7 +208,6 @@ private fun DonationsListView(
                     CircularProgressIndicator(color = PrimaryForestGreen)
                 }
             } else if (currentList.isEmpty()) {
-                // Empty State matching Storyboard Panel 8
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -256,7 +256,6 @@ private fun DonationsListView(
                     }
                 }
             } else {
-                // List View matching Storyboard Panel 8
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
@@ -279,8 +278,6 @@ private fun DonationItemCard(
     listing: FoodListing,
     onClick: () -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault()) }
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,13 +333,13 @@ private fun DonationItemCard(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Status Badge
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .background(
                                 when (listing.status) {
                                     "available" -> SoftGreen
+                                    "claimed" -> Color(0xFFFFF3E0)
                                     "completed" -> Color(0xFFE3F2FD)
                                     else -> Color(0xFFFFEBEE)
                                 }
@@ -355,6 +352,7 @@ private fun DonationItemCard(
                                 fontWeight = FontWeight.Bold,
                                 color = when (listing.status) {
                                     "available" -> PrimaryForestGreen
+                                    "claimed" -> Color(0xFFE65100)
                                     "completed" -> Color(0xFF1565C0)
                                     else -> Color(0xFFC62828)
                                 },
@@ -377,9 +375,10 @@ private fun DonationItemCard(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = dateFormat.format(Date(listing.preparationDateTime)),
+                    text = if (listing.status == "claimed") "Claimed by: ${listing.claimantName?.ifBlank { "Receiver" } ?: "Receiver"}" else "Available for pickup",
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = SecondaryText,
+                        color = if (listing.status == "claimed") Color(0xFFE65100) else SecondaryText,
+                        fontWeight = if (listing.status == "claimed") FontWeight.Medium else FontWeight.Normal,
                         fontSize = 12.sp
                     )
                 )
@@ -391,12 +390,13 @@ private fun DonationItemCard(
 @Composable
 private fun DonationDetailView(
     listing: FoodListing,
-    onBackClick: () -> Unit,
-    onCancelClick: () -> Unit,
-    onCompleteClick: () -> Unit
+    viewModel: DonateViewModel,
+    onBackClick: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault()) }
     var showCancelConfirmDialog by remember { mutableStateOf(false) }
+    var showConfirmHandoverDialog by remember { mutableStateOf(false) }
+    var showWithdrawDialog by remember { mutableStateOf(false) }
 
     if (showCancelConfirmDialog) {
         AlertDialog(
@@ -407,7 +407,7 @@ private fun DonationDetailView(
                 Button(
                     onClick = {
                         showCancelConfirmDialog = false
-                        onCancelClick()
+                        viewModel.withdrawDonation(listing.id)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
@@ -424,15 +424,68 @@ private fun DonationDetailView(
         )
     }
 
+    if (showConfirmHandoverDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmHandoverDialog = false },
+            title = { Text("Confirm Handover?", fontWeight = FontWeight.Bold, color = DeepText) },
+            text = { Text("Please only confirm after you have physically handed over the food to the receiver.", color = SecondaryText, lineHeight = 20.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showConfirmHandoverDialog = false
+                        viewModel.confirmHandover(listing.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryForestGreen)
+                ) {
+                    Text("Confirm Handover", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmHandoverDialog = false }) {
+                    Text("Cancel", color = SecondaryText, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+
+    if (showWithdrawDialog) {
+        AlertDialog(
+            onDismissRequest = { showWithdrawDialog = false },
+            title = { Text("Withdraw Donation?", fontWeight = FontWeight.Bold, color = DeepText) },
+            text = { Text("Are you sure you want to withdraw this donation? The claim will be cancelled.", color = SecondaryText, lineHeight = 20.sp) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showWithdrawDialog = false
+                        viewModel.withdrawDonation(listing.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Withdraw", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWithdrawDialog = false }) {
+                    Text("Keep", color = PrimaryForestGreen, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(WarmIvory)
+            .statusBarsPadding()
     ) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Sticky Top Header Bar matching Storyboard Panel 9
+            // Sticky Top Header Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -460,7 +513,6 @@ private fun DonationDetailView(
                 }
             }
 
-            // Scrollable Details Content Area below Sticky Header
             val scrollState = rememberScrollState()
 
             Column(
@@ -469,7 +521,7 @@ private fun DonationDetailView(
                     .fillMaxWidth()
                     .verticalScroll(scrollState)
             ) {
-                // Banner Image matching Storyboard Panel 9
+                // Banner Image
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -495,7 +547,6 @@ private fun DonationDetailView(
                         }
                     }
 
-                    // Status Overlay Badge matching Storyboard Panel 9
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -504,6 +555,7 @@ private fun DonationDetailView(
                             .background(
                                 when (listing.status) {
                                     "available" -> PrimaryForestGreen
+                                    "claimed" -> Color(0xFFE65100)
                                     "completed" -> Color(0xFF1565C0)
                                     else -> Color(0xFFC62828)
                                 }
@@ -523,7 +575,6 @@ private fun DonationDetailView(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Details Content Card matching Storyboard Panel 9
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -549,6 +600,18 @@ private fun DonationDetailView(
                         )
                     }
 
+                    if (listing.status == "claimed") {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Person, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Claimed by: ${listing.claimantName?.ifBlank { "Receiver" } ?: "Receiver"}",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = DeepText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -569,6 +632,63 @@ private fun DonationDetailView(
                             text = listing.pickupAddress.ifBlank { "Location on map" },
                             style = MaterialTheme.typography.bodyMedium.copy(color = SecondaryText, fontSize = 13.5.sp, lineHeight = 19.sp)
                         )
+                    }
+
+                    // Two-Party Pickup Confirmation Progress Card (if claimed)
+                    if (listing.status == "claimed") {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = SoftGreen),
+                            border = BorderStroke(1.dp, Color(0xFFC8D6B9))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Text(
+                                    text = "Pickup & Handover Status",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = PrimaryForestGreen, fontSize = 14.sp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (listing.receiverPickupConfirmed) Icons.Filled.CheckCircle else Icons.Outlined.Info,
+                                        contentDescription = null,
+                                        tint = if (listing.receiverPickupConfirmed) PrimaryForestGreen else SecondaryText,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (listing.receiverPickupConfirmed) "Receiver pickup confirmed ✓" else "Waiting for receiver pickup confirmation",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            color = if (listing.receiverPickupConfirmed) PrimaryForestGreen else DeepText,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 13.5.sp
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (listing.donorHandoverConfirmed) Icons.Filled.CheckCircle else Icons.Outlined.Info,
+                                        contentDescription = null,
+                                        tint = if (listing.donorHandoverConfirmed) PrimaryForestGreen else SecondaryText,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (listing.donorHandoverConfirmed) "Your handover confirmed ✓" else "Waiting for your handover confirmation",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            color = if (listing.donorHandoverConfirmed) PrimaryForestGreen else DeepText,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 13.5.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
@@ -598,69 +718,67 @@ private fun DonationDetailView(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // Functional Action Buttons for Active Listing
+                    // Functional Action Buttons for Active / Claimed Listing
                     if (listing.status == "available") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        Button(
+                            onClick = { showCancelConfirmDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         ) {
-                            OutlinedButton(
-                                onClick = { onCompleteClick() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                shape = RoundedCornerShape(24.dp),
-                                border = BorderStroke(1.5.dp, PrimaryForestGreen)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = null,
-                                        tint = PrimaryForestGreen,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Mark Complete",
-                                        color = PrimaryForestGreen,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        maxLines = 1
-                                    )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.Cancel,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Cancel Listing",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    } else if (listing.status == "claimed") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (!listing.donorHandoverConfirmed) {
+                                Button(
+                                    onClick = { showConfirmHandoverDialog = true },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(24.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryForestGreen)
+                                ) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Confirm Handover", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 }
                             }
 
-                            Button(
-                                onClick = { showCancelConfirmDialog = true },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                shape = RoundedCornerShape(24.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Cancel,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Cancel",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        maxLines = 1
-                                    )
+                            if (!listing.donorHandoverConfirmed && !listing.receiverPickupConfirmed) {
+                                OutlinedButton(
+                                    onClick = { showWithdrawDialog = true },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(24.dp),
+                                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("Withdraw Donation", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 }
                             }
                         }
                     }
 
-                    // Generous bottom spacing so buttons clear the bottom bar & Android nav bar cleanly
                     Spacer(modifier = Modifier.height(90.dp).navigationBarsPadding())
                 }
             }

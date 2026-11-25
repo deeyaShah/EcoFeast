@@ -456,8 +456,15 @@ class DonateViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         var expErr: String? = null
-        if (state.expiryTimestamp != null && state.expiryTimestamp <= state.preparationTimestamp) {
-            expErr = "Expiry date must be after preparation time"
+        val now = System.currentTimeMillis()
+        if (state.expiryTimestamp == null) {
+            expErr = "Please select a best before / expiry date & time."
+            isValid = false
+        } else if (state.expiryTimestamp <= now) {
+            expErr = "Expiry time must be in the future."
+            isValid = false
+        } else if (state.expiryTimestamp <= state.preparationTimestamp) {
+            expErr = "Expiry date and time must be after preparation time."
             isValid = false
         }
 
@@ -489,6 +496,15 @@ class DonateViewModel(application: Application) : AndroidViewModel(application) 
 
         if (!validateStep1() || !validateStep2() || !validateStep3() || !validateStep4() || !state.isConfirmed) {
             _uiState.update { it.copy(submitError = "Please check all required fields and confirm food safety") }
+            return
+        }
+
+        // Revalidate expiry timestamp immediately before saving to ensure it hasn't expired in the interim
+        val now = System.currentTimeMillis()
+        val exp = state.expiryTimestamp
+        if (exp == null || exp <= now || exp <= state.preparationTimestamp) {
+            validateStep3()
+            _uiState.update { it.copy(submitError = "Expiry time has elapsed or is invalid. Please update step 3.") }
             return
         }
 
@@ -602,20 +618,27 @@ class DonateViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun cancelSelectedListing(listingId: String) {
+    fun confirmHandover(listingId: String) {
         viewModelScope.launch {
-            foodRepository.updateListingStatus(listingId, "cancelled")
-            _uiState.update {
-                it.copy(subScreen = DonateSubScreen.MY_DONATIONS_LIST, selectedListing = null)
+            val result = foodRepository.confirmHandover(listingId)
+            if (result.isSuccess) {
+                val updated = foodRepository.getListingById(listingId)
+                _uiState.update {
+                    it.copy(
+                        selectedListing = updated ?: it.selectedListing
+                    )
+                }
             }
         }
     }
 
-    fun completeSelectedListing(listingId: String) {
+    fun withdrawDonation(listingId: String) {
         viewModelScope.launch {
-            foodRepository.updateListingStatus(listingId, "completed")
-            _uiState.update {
-                it.copy(subScreen = DonateSubScreen.MY_DONATIONS_LIST, selectedListing = null)
+            val result = foodRepository.withdrawDonation(listingId)
+            if (result.isSuccess) {
+                _uiState.update {
+                    it.copy(subScreen = DonateSubScreen.MY_DONATIONS_LIST, selectedListing = null)
+                }
             }
         }
     }

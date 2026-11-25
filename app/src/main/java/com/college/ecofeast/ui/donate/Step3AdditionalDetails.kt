@@ -177,9 +177,9 @@ fun Step3AdditionalDetails(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 2. Best Before / Expiry Date (Optional)
+        // 2. Best Before / Expiry Date & Time *
         Text(
-            text = "Best Before / Expiry Date",
+            text = "Best Before / Expiry Date & Time *",
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = FontWeight.Bold,
                 color = DeepText,
@@ -213,7 +213,7 @@ fun Step3AdditionalDetails(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = if (expiryTimestamp != null) dateFormat.format(Date(expiryTimestamp)) else "Select date (optional)",
+                    text = if (expiryTimestamp != null) dateFormat.format(Date(expiryTimestamp)) else "Select expiry date & time",
                     style = MaterialTheme.typography.bodyMedium.copy(
                         color = if (expiryTimestamp != null) DeepText else SecondaryText,
                         fontSize = 14.5.sp
