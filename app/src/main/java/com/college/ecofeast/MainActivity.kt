@@ -192,6 +192,10 @@ class MainActivity : ComponentActivity() {
                                     pendingClaimListingId = null
                                     currentScreen = AppScreen.WELCOME
                                 },
+                                onProfileUpdated = { newName, newEmail ->
+                                    userName = newName
+                                    userEmail = newEmail
+                                },
                                 onClaimAsGuest = { listingId ->
                                     pendingClaimListingId = listingId
                                     isGuest = false

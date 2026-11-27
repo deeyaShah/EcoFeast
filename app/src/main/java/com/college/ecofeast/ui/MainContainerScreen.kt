@@ -17,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.college.ecofeast.ui.auth.EditProfileScreen
 import com.college.ecofeast.ui.claims.ClaimsViewModel
 import com.college.ecofeast.ui.claims.MyClaimsScreen
 import com.college.ecofeast.ui.nearby.NearbyViewModel
@@ -37,12 +38,14 @@ fun MainContainerScreen(
     pendingClaimListingId: String? = null,
     onSignInClick: () -> Unit = {},
     onSignOutClick: () -> Unit = {},
+    onProfileUpdated: (String, String) -> Unit = { _, _ -> },
     onClaimAsGuest: (String) -> Unit = {},
     onPendingClaimRestored: () -> Unit = {}
 ) {
     var currentTab by rememberSaveable { mutableStateOf(EcoFeastTab.HOME) }
     var isBottomBarVisible by remember { mutableStateOf(true) }
     var showMyClaims by rememberSaveable { mutableStateOf(false) }
+    var showEditProfile by rememberSaveable { mutableStateOf(false) }
 
     val nearbyViewModel: NearbyViewModel = viewModel()
     val claimsViewModel: ClaimsViewModel = viewModel()
@@ -54,6 +57,7 @@ fun MainContainerScreen(
             currentTab = EcoFeastTab.NEARBY
             isBottomBarVisible = true
             showMyClaims = false
+            showEditProfile = false
             nearbyViewModel.restorePendingClaimListing(pendingClaimListingId)
             onPendingClaimRestored()
         }
@@ -67,13 +71,14 @@ fun MainContainerScreen(
 
     Scaffold(
         bottomBar = {
-            if (isBottomBarVisible && !showMyClaims) {
+            if (isBottomBarVisible && !showMyClaims && !showEditProfile) {
                 EcoFeastBottomNavigation(
                     currentTab = currentTab,
                     onTabSelected = { selectedTab ->
                         currentTab = selectedTab
                         isBottomBarVisible = true
                         showMyClaims = false
+                        showEditProfile = false
                     }
                 )
             }
@@ -84,9 +89,20 @@ fun MainContainerScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(if (isBottomBarVisible && !showMyClaims) innerPadding else PaddingValues())
+                .padding(if (isBottomBarVisible && !showMyClaims && !showEditProfile) innerPadding else PaddingValues())
         ) {
-            if (showMyClaims) {
+            if (showEditProfile) {
+                EditProfileScreen(
+                    currentName = userName,
+                    currentEmail = userEmail,
+                    phoneNumber = userPhone,
+                    onBackClick = { showEditProfile = false },
+                    onProfileSaved = { newName, newEmail ->
+                        showEditProfile = false
+                        onProfileUpdated(newName, newEmail)
+                    }
+                )
+            } else if (showMyClaims) {
                 MyClaimsScreen(
                     uiState = claimsUiState,
                     viewModel = claimsViewModel,
@@ -159,6 +175,13 @@ fun MainContainerScreen(
                                 userEmail = userEmail,
                                 onSignInClick = onSignInClick,
                                 onSignOutClick = onSignOutClick,
+                                onEditProfileClick = {
+                                    showEditProfile = true
+                                },
+                                onNavigateToMyDonations = {
+                                    currentTab = EcoFeastTab.DONATE
+                                    isBottomBarVisible = true
+                                },
                                 onNavigateToMyClaims = {
                                     showMyClaims = true
                                 }
